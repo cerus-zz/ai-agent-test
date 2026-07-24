@@ -23,14 +23,7 @@ class QAPair:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
-class DocumentSet:
-    """A set of documents/passages for indexing."""
 
-    id: str
-    content: str
-    title: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def load_natural_questions(subset: str = "dev", max_samples: int = 500) -> list[QAPair]:
