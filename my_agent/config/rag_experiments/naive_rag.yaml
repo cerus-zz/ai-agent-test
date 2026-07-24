@@ -1,0 +1,11 @@
+# Naive RAG experiment config
+# Overrides default config values
+
+retriever:
+  strategy: "naive"
+  top_k: 5
+
+graph:
+  enabled: false
+
+synthesizer: {}

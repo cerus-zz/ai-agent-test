@@ -1,0 +1,10 @@
+# HyDE (Hypothetical Document Embeddings) experiment config
+
+retriever:
+  strategy: "hyde"
+  top_k: 5
+
+graph:
+  enabled: false
+
+synthesizer: {}

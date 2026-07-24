@@ -1,0 +1,22 @@
+name: my_agent
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - chromadb>=0.5.0
+      - openai>=1.0.0
+      - sentence-transformers>=3.0.0
+      - pydantic>=2.0.0
+      - pydantic-settings>=2.0.0
+      - pyyaml>=6.0
+      - datasets>=2.14.0
+      - ragas>=0.2.0
+      - networkx>=3.2
+      - langgraph>=0.2.0
+      - langgraph-checkpoint>=2.0.0
+
+      - tqdm>=4.66.0
+      - pandas>=2.0.0
