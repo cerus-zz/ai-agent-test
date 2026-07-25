@@ -17,6 +17,5 @@ dependencies:
       - networkx>=3.2
       - langgraph>=0.2.0
       - langgraph-checkpoint>=2.0.0
-
       - tqdm>=4.66.0
       - pandas>=2.0.0
