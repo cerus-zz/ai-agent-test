@@ -67,10 +67,11 @@ setup.bat / setup.sh           # One-command setup
 
 ### Datasets
 
-- **Natural Questions** (`nq_open` subset) — open-domain QA
-- **HotpotQA** (`distractor` subset) — multi-hop reasoning
+- **EnterpriseRAG-Bench** (`onyx-dot-app/EnterpriseRAG-Bench`) — Real-world company internal knowledge benchmark
+- **WixQA** (`Wix/WixQA`) — Domain-specific customer support KB benchmark
+- **T²-RAGBench** (`G4KMU/t2-ragbench`) — Financial document benchmark with text and tabular data
 
-Both loaded via HuggingFace `datasets` library in a unified `QAPair` format.
+All datasets return a standardized `DatasetBundle` (containing evaluation `QAPair` instances and retrievable corpus `Document` instances) and support local caching under `data/cache/`.
 
 ### Evaluation
 
@@ -113,11 +114,11 @@ llm:
 ### 3. Run Experiments
 
 ```bash
-# Naive RAG on Natural Questions
-python -m my_agent.main eval --dataset natural_questions --experiment naive_rag --max-samples 50
+# Naive RAG on WixQA
+python -m my_agent.main eval --dataset wixqa --experiment naive_rag --max-samples 50
 
-# HyDE on Natural Questions
-python -m my_agent.main eval --dataset natural_questions --experiment hyde --max-samples 50
+# HyDE on EnterpriseRAG-Bench
+python -m my_agent.main eval --dataset enterpriserag_bench --experiment hyde --max-samples 50
 
 # Compare results in experiments/results/
 ```

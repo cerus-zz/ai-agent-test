@@ -25,5 +25,9 @@ experiments/results/
 .DS_Store
 Thumbs.db
 
+# Data & Cache
+data/cache/
+data/hf_cache/
+
 # Jupyter
 .ipynb_checkpoints/

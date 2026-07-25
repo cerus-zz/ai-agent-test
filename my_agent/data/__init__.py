@@ -1,5 +1,19 @@
 """Data module exports."""
 
-from my_agent.data.loaders import QAPair, load_dataset, load_hotpotqa, load_natural_questions
+from my_agent.data.loaders import (
+    DatasetBundle,
+    QAPair,
+    load_enterpriserag_bench,
+    load_qa_dataset,
+    load_t2_ragbench,
+    load_wixqa,
+)
 
-__all__ = ["QAPair", "load_natural_questions", "load_hotpotqa", "load_dataset"]
+__all__ = [
+    "QAPair",
+    "DatasetBundle",
+    "load_enterpriserag_bench",
+    "load_wixqa",
+    "load_t2_ragbench",
+    "load_qa_dataset",
+]

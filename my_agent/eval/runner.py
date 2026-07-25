@@ -11,7 +11,7 @@ from pathlib import Path
 from my_agent.config.schema import RAGConfig
 from my_agent.core.base import Document
 from my_agent.core.pipeline import RAGPipeline
-from my_agent.data.loaders import QAPair, load_dataset
+from my_agent.data.loaders import QAPair, load_qa_dataset
 from my_agent.eval.metrics import EvalResult, compute_ragas_metrics, compute_simple_metrics
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ def run_experiment(
     max_samples: int = 100,
     dataset_kwargs: dict | None = None,
     results_dir: str = "experiments/results",
+    force_reload: bool = False,
 ) -> EvalResult:
     """Run a full evaluation experiment.
 
@@ -47,15 +48,17 @@ def run_experiment(
 
     dataset_kwargs = dataset_kwargs or {}
 
-    # 1. Load dataset
-    qa_pairs = load_dataset(dataset_name, max_samples=max_samples, **dataset_kwargs)
+    # 1. Load dataset bundle
+    bundle = load_qa_dataset(dataset_name, max_samples=max_samples, force_reload=force_reload, **dataset_kwargs)
+    qa_pairs = bundle.qa_pairs
     if not qa_pairs:
         logger.error(f"No samples loaded from {dataset_name}")
         return EvalResult(experiment_name=experiment_name, dataset_name=dataset_name, num_samples=0)
 
-    # 2. Index documents (use questions and answers as context for now)
+    # 2. Index corpus documents into ChromaDB
     pipeline = RAGPipeline(config)
-    _index_dataset_documents(pipeline, qa_pairs)
+    pipeline.index_documents(bundle.corpus_docs)
+    logger.info(f"Indexed {len(bundle.corpus_docs)} corpus documents into ChromaDB")
 
     # 3. Run queries
     questions = []
