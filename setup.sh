@@ -2,7 +2,7 @@
 # Setup script for my_agent conda environment (Linux/Mac)
 # Adjust CONDA_PATH if your anaconda/miniconda is installed elsewhere
 
-CONDA_PATH="${HOME}/anaconda3"
+CONDA_PATH="${HOME}/Documents/work-space/projects/programming/devtool-miniconda3"
 
 echo "Creating conda environment 'my_agent'..."
 "${CONDA_PATH}/bin/conda" env update -f environment.yml --prune

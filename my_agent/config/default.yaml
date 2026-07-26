@@ -1,13 +1,13 @@
 # Default RAG configuration
 llm:
-  base_url: "https://api.openai.com/v1"
-  api_key: "sk-xxx"
-  model: "gpt-4o-mini"
-  temperature: 0.0
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" #/chat/completions
+  api_key: "sk-56db2cad29e1400dab584a81ed42c873"
+  model: "glm-4.7"
+  temperature: 0.2
   max_tokens: 2048
 
 embedding:
-  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  model_name: "text-embedding-v4"
   provider: "sentence-transformers"
 
 chroma:

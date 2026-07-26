@@ -18,7 +18,8 @@ from my_agent.core.base import Document
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path("data/cache")
+DATA_DIR = Path(__file__).resolve().parent
+CACHE_DIR = DATA_DIR / "cache"
 
 
 @dataclass
@@ -43,7 +44,7 @@ class DatasetBundle:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-HF_CACHE_DIR = Path("data/hf_cache")
+HF_CACHE_DIR = DATA_DIR / "hf_cache"
 
 
 # ---------------------------------------------------------------------------

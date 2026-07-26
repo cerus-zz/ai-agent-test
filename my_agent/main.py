@@ -40,10 +40,27 @@ def parse_args():
 
 def load_config(config_path: str, experiment: str | None = None) -> RAGConfig:
     """Load base config, optionally overlaid with experiment config."""
-    base = RAGConfig.from_yaml(config_path)
+    path_obj = Path(config_path)
+    if not path_obj.exists():
+        pkg_root = Path(__file__).resolve().parent
+        if (pkg_root / config_path).exists():
+            path_obj = pkg_root / config_path
+        elif (pkg_root / "config" / Path(config_path).name).exists():
+            path_obj = pkg_root / "config" / Path(config_path).name
+        elif (pkg_root.parent / config_path).exists():
+            path_obj = pkg_root.parent / config_path
+
+    base = RAGConfig.from_yaml(path_obj)
 
     if experiment:
         exp_path = Path(f"config/rag_experiments/{experiment}.yaml")
+        if not exp_path.exists():
+            pkg_root = Path(__file__).resolve().parent
+            if (pkg_root / exp_path).exists():
+                exp_path = pkg_root / exp_path
+            elif (pkg_root.parent / exp_path).exists():
+                exp_path = pkg_root.parent / exp_path
+
         if exp_path.exists():
             exp_config = RAGConfig.from_yaml(exp_path)
             # Merge: experiment config overrides base for non-default fields
