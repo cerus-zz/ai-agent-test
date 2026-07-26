@@ -11,7 +11,7 @@ from pathlib import Path
 from my_agent.config.schema import RAGConfig
 from my_agent.core.base import Document
 from my_agent.core.pipeline import RAGPipeline
-from my_agent.data.loaders import QAPair, load_qa_dataset
+from my_agent.data.loaders import QAPair, load_corpus, load_qa_dataset
 from my_agent.eval.metrics import EvalResult, compute_ragas_metrics, compute_simple_metrics
 
 logger = logging.getLogger(__name__)
@@ -29,36 +29,31 @@ def run_experiment(
     """Run a full evaluation experiment.
 
     Flow:
-    1. Load dataset (QA pairs + context documents)
-    2. Index documents into the retriever
+    1. Load corpus documents & index into retriever
+    2. Load QA pairs for evaluation
     3. For each QA pair: query → retrieve → synthesize
     4. Compute metrics (simple + RAGAS)
     5. Save results to disk
-
-    Args:
-        config: RAG configuration
-        dataset_name: 'natural_questions' or 'hotpotqa'
-        experiment_name: Name for this experiment run
-        max_samples: Maximum QA pairs to evaluate
-        dataset_kwargs: Extra args for the dataset loader
-        results_dir: Directory to save results
     """
     logger.info(f"=== Experiment: {experiment_name} ===")
     logger.info(f"Dataset: {dataset_name}, Strategy: {config.retriever.strategy}")
 
     dataset_kwargs = dataset_kwargs or {}
 
-    # 1. Load dataset bundle
-    bundle = load_qa_dataset(dataset_name, max_samples=max_samples, force_reload=force_reload, **dataset_kwargs)
-    qa_pairs = bundle.qa_pairs
+    # 1. Load QA pairs
+    qa_pairs = load_qa_dataset(dataset_name, max_samples=max_samples, force_reload=force_reload, **dataset_kwargs)
     if not qa_pairs:
         logger.error(f"No samples loaded from {dataset_name}")
         return EvalResult(experiment_name=experiment_name, dataset_name=dataset_name, num_samples=0)
 
-    # 2. Index corpus documents into ChromaDB
+    # 2. Load and index corpus documents into ChromaDB
+    corpus_docs = load_corpus(dataset_name, force_reload=force_reload, **dataset_kwargs)
     pipeline = RAGPipeline(config)
-    pipeline.index_documents(bundle.corpus_docs)
-    logger.info(f"Indexed {len(bundle.corpus_docs)} corpus documents into ChromaDB")
+    if corpus_docs:
+        pipeline.index_documents(corpus_docs)
+        logger.info(f"Indexed {len(corpus_docs)} corpus documents into ChromaDB")
+    else:
+        logger.warning(f"No corpus documents found for dataset '{dataset_name}'")
 
     # 3. Run queries
     questions = []
@@ -136,26 +131,6 @@ def run_experiment_set(
         )
         results.append(result)
     return results
-
-
-def _index_dataset_documents(pipeline: RAGPipeline, qa_pairs: list[QAPair]) -> None:
-    """Index QA pair questions as retrievable documents.
-
-    In a real scenario, you'd index the actual corpus passages.
-    For quick experiments, we index the questions + answers.
-    """
-    docs = []
-    for qa in qa_pairs:
-        answer_text = qa.answer if isinstance(qa.answer, str) else " ".join(qa.answer)
-        docs.append(
-            Document(
-                id=qa.id,
-                content=f"Q: {qa.question}\nA: {answer_text}",
-                metadata={"source": qa.metadata.get("source", ""), "qa_id": qa.id},
-            )
-        )
-    pipeline.index_documents(docs)
-    logger.info(f"Indexed {len(docs)} documents")
 
 
 def _save_results(result: EvalResult, results_dir: str) -> None:

@@ -1,6 +1,6 @@
 """Dataset loaders for enterprise RAG benchmarks.
 
-Supports loading and caching modern enterprise & domain-specific RAG benchmarks:
+Supports decoupled loading and caching of corpus documents and evaluation QA pairs:
 - EnterpriseRAG-Bench (onyx-dot-app/EnterpriseRAG-Bench)
 - WixQA (Wix/WixQA)
 - T²-RAGBench (G4KMU/t2-ragbench)
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parent
 CACHE_DIR = DATA_DIR / "cache"
+HF_CACHE_DIR = DATA_DIR / "hf_cache"
 
 
 @dataclass
@@ -44,193 +45,121 @@ class DatasetBundle:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-HF_CACHE_DIR = DATA_DIR / "hf_cache"
-
-
 # ---------------------------------------------------------------------------
-# Cache helpers
+# Disk Caching Helpers
 # ---------------------------------------------------------------------------
 
 
-def _cache_key(dataset_name: str, subset: str, max_samples: int, **extra) -> str:
-    """Build a deterministic filename for cached dataset bundle."""
-    parts = [dataset_name, subset, str(max_samples)]
-    for k, v in sorted(extra.items()):
-        if v is not None:
-            parts.append(f"{k}-{v}")
-    return "_".join(parts) + ".json"
-
-
-def _save_bundle_cache(bundle: DatasetBundle, cache_path: Path) -> None:
-    """Persist DatasetBundle to disk as JSON."""
+def _save_corpus_cache(corpus_docs: list[Document], cache_path: Path) -> None:
+    """Persist corpus documents to disk cache as JSON."""
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "name": bundle.name,
-        "qa_pairs": [asdict(p) for p in bundle.qa_pairs],
-        "corpus_docs": [
-            {
-                "id": doc.id,
-                "content": doc.content,
-                "metadata": doc.metadata,
-                "embedding": doc.embedding,
-            }
-            for doc in bundle.corpus_docs
-        ],
-        "metadata": bundle.metadata,
-    }
+    payload = [
+        {
+            "id": doc.id,
+            "content": doc.content,
+            "metadata": doc.metadata,
+            "embedding": doc.embedding,
+        }
+        for doc in corpus_docs
+    ]
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
-    logger.info(f"Cached DatasetBundle '{bundle.name}' ({len(bundle.qa_pairs)} QA pairs, {len(bundle.corpus_docs)} docs) → {cache_path}")
+    logger.info(f"Cached {len(corpus_docs)} corpus documents → {cache_path}")
 
 
-def _load_bundle_cache(cache_path: Path) -> DatasetBundle | None:
-    """Load DatasetBundle from a cached JSON file if it exists."""
+def _load_corpus_cache(cache_path: Path) -> list[Document] | None:
+    """Load corpus documents from disk cache if existing."""
     if not cache_path.exists():
         return None
     with open(cache_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-
-    qa_pairs = [QAPair(**row) for row in data["qa_pairs"]]
-    corpus_docs = [
+    docs = [
         Document(
             id=d["id"],
             content=d["content"],
             metadata=d.get("metadata", {}),
             embedding=d.get("embedding"),
         )
-        for d in data["corpus_docs"]
+        for d in data
     ]
-    bundle = DatasetBundle(
-        name=data["name"],
-        qa_pairs=qa_pairs,
-        corpus_docs=corpus_docs,
-        metadata=data.get("metadata", {}),
-    )
-    logger.info(f"Loaded DatasetBundle '{bundle.name}' from cache ({cache_path})")
-    return bundle
+    logger.info(f"Loaded {len(docs)} corpus documents from cache ({cache_path})")
+    return docs
+
+
+def _save_qa_cache(qa_pairs: list[QAPair], cache_path: Path) -> None:
+    """Persist QA pairs to disk cache as JSON."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [asdict(p) for p in qa_pairs]
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    logger.info(f"Cached {len(qa_pairs)} QA pairs → {cache_path}")
+
+
+def _load_qa_cache(cache_path: Path) -> list[QAPair] | None:
+    """Load QA pairs from disk cache if existing."""
+    if not cache_path.exists():
+        return None
+    with open(cache_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    qa_pairs = [QAPair(**row) for row in data]
+    logger.info(f"Loaded {len(qa_pairs)} QA pairs from cache ({cache_path})")
+    return qa_pairs
 
 
 # ---------------------------------------------------------------------------
-# Dataset Loaders
+# Corpus Loaders
 # ---------------------------------------------------------------------------
 
 
-def load_enterpriserag_bench(
-    subset: str = "questions",
-    split: str = "test",
-    max_samples: int = 50,
-    force_reload: bool = False,
-) -> DatasetBundle:
-    """Load EnterpriseRAG-Bench (onyx-dot-app/EnterpriseRAG-Bench)."""
-    cache_path = CACHE_DIR / _cache_key("enterpriserag", subset, max_samples, split=split)
+def load_enterpriserag_corpus(force_reload: bool = False) -> list[Document]:
+    """Load EnterpriseRAG-Bench corpus documents."""
+    cache_path = CACHE_DIR / "corpus_enterpriserag_bench.json"
     if not force_reload:
-        cached = _load_bundle_cache(cache_path)
+        cached = _load_corpus_cache(cache_path)
         if cached is not None:
             return cached
 
     from datasets import load_dataset as hf_load_dataset
 
-    logger.info(f"Loading EnterpriseRAG-Bench ({subset}/{split}), max_samples={max_samples}")
-    ds = hf_load_dataset(
-        "onyx-dot-app/EnterpriseRAG-Bench",
-        name=subset,
-        split=split,
-        streaming=False,
-        cache_dir=str(HF_CACHE_DIR),
-    )
-
-    qa_pairs: list[QAPair] = []
-    corpus_docs_dict: dict[str, Document] = {}
-
-    for i, row in enumerate(ds):
-        if i >= max_samples:
-            break
-        qid = str(row.get("question_id", f"erag_{i}"))
-        doc_ids = row.get("expected_doc_ids", [])
-        if isinstance(doc_ids, str):
-            doc_ids = [doc_ids]
-
-        qa_pairs.append(
-            QAPair(
-                id=qid,
-                question=row["question"],
-                answer=row.get("gold_answer", ""),
-                ground_truth_doc_ids=doc_ids,
-                metadata={
-                    "source": "enterpriserag_bench",
-                    "question_type": row.get("question_type", ""),
-                    "source_types": row.get("source_types", []),
-                    "answer_facts": row.get("answer_facts", []),
-                },
-            )
+    logger.info("Loading EnterpriseRAG-Bench corpus documents...")
+    corpus_docs: list[Document] = []
+    try:
+        ds_corpus = hf_load_dataset(
+            "onyx-dot-app/EnterpriseRAG-Bench",
+            name="documents",
+            split="train",
+            streaming=False,
+            cache_dir=str(HF_CACHE_DIR),
         )
-
-        for did in doc_ids:
-            if did not in corpus_docs_dict:
-                corpus_docs_dict[did] = Document(
-                    id=did,
-                    content=f"Enterprise document {did} covering details for query context.",
-                    metadata={"source": "enterpriserag_bench", "doc_id": did},
+        for row in ds_corpus:
+            doc_id = str(row.get("doc_id") or row.get("id") or "")
+            content = row.get("text") or row.get("content") or row.get("body") or ""
+            if doc_id and content:
+                corpus_docs.append(
+                    Document(
+                        id=doc_id,
+                        content=content,
+                        metadata={"source": "enterpriserag_bench", "doc_id": doc_id, "title": row.get("title", "")},
+                    )
                 )
+    except Exception as e:
+        logger.warning(f"Could not load EnterpriseRAG-Bench corpus documents dataset: {e}")
 
-    bundle = DatasetBundle(
-        name="enterpriserag_bench",
-        qa_pairs=qa_pairs,
-        corpus_docs=list(corpus_docs_dict.values()),
-        metadata={"subset": subset, "split": split},
-    )
-    _save_bundle_cache(bundle, cache_path)
-    return bundle
+    _save_corpus_cache(corpus_docs, cache_path)
+    return corpus_docs
 
 
-def load_wixqa(
-    subset: str = "wixqa_expertwritten",
-    split: str = "train",
-    max_samples: int = 50,
-    force_reload: bool = False,
-) -> DatasetBundle:
-    """Load WixQA dataset (Wix/WixQA)."""
-    cache_path = CACHE_DIR / _cache_key("wixqa", subset, max_samples, split=split)
+def load_wixqa_corpus(force_reload: bool = False) -> list[Document]:
+    """Load WixQA corpus documents."""
+    cache_path = CACHE_DIR / "corpus_wixqa.json"
     if not force_reload:
-        cached = _load_bundle_cache(cache_path)
+        cached = _load_corpus_cache(cache_path)
         if cached is not None:
             return cached
 
     from datasets import load_dataset as hf_load_dataset
 
-    logger.info(f"Loading WixQA ({subset}/{split}), max_samples={max_samples}")
-
-    # 1. Load QA pairs
-    ds_qa = hf_load_dataset(
-        "Wix/WixQA",
-        name=subset,
-        split=split,
-        streaming=False,
-        cache_dir=str(HF_CACHE_DIR),
-    )
-    qa_pairs: list[QAPair] = []
-    referenced_article_ids: set[str] = set()
-
-    for i, row in enumerate(ds_qa):
-        if i >= max_samples:
-            break
-        art_ids = row.get("article_ids", [])
-        if isinstance(art_ids, str):
-            art_ids = [art_ids]
-        art_ids_str = [str(x) for x in art_ids]
-        referenced_article_ids.update(art_ids_str)
-
-        qa_pairs.append(
-            QAPair(
-                id=f"wix_{i}",
-                question=row["question"],
-                answer=row.get("answer", ""),
-                ground_truth_doc_ids=art_ids_str,
-                metadata={"source": "wixqa", "subset": subset},
-            )
-        )
-
-    # 2. Load KB corpus
+    logger.info("Loading WixQA corpus documents (wix_kb_corpus)...")
     ds_kb = hf_load_dataset(
         "Wix/WixQA",
         name="wix_kb_corpus",
@@ -253,32 +182,188 @@ def load_wixqa(
             )
         )
 
-    bundle = DatasetBundle(
-        name="wixqa",
-        qa_pairs=qa_pairs,
-        corpus_docs=corpus_docs,
-        metadata={"subset": subset, "split": split},
-    )
-    _save_bundle_cache(bundle, cache_path)
-    return bundle
+    _save_corpus_cache(corpus_docs, cache_path)
+    return corpus_docs
 
 
-def load_t2_ragbench(
-    subset: str = "FinQA",
-    split: str = "train",
-    max_samples: int = 50,
-    force_reload: bool = False,
-) -> DatasetBundle:
-    """Load T²-RAGBench (G4KMU/t2-ragbench)."""
-    cache_path = CACHE_DIR / _cache_key("t2_ragbench", subset, max_samples, split=split)
+def load_t2_ragbench_corpus(subset: str = "FinQA", split: str = "train", force_reload: bool = False) -> list[Document]:
+    """Load T²-RAGBench corpus documents."""
+    cache_path = CACHE_DIR / f"corpus_t2_ragbench_{subset}_{split}.json"
     if not force_reload:
-        cached = _load_bundle_cache(cache_path)
+        cached = _load_corpus_cache(cache_path)
         if cached is not None:
             return cached
 
     from datasets import load_dataset as hf_load_dataset
 
-    logger.info(f"Loading T²-RAGBench ({subset}/{split}), max_samples={max_samples}")
+    logger.info(f"Loading T²-RAGBench corpus documents ({subset}/{split})...")
+    ds = hf_load_dataset(
+        "G4KMU/t2-ragbench",
+        name=subset,
+        split=split,
+        streaming=False,
+        cache_dir=str(HF_CACHE_DIR),
+    )
+
+    corpus_docs_dict: dict[str, Document] = {}
+    for i, row in enumerate(ds):
+        context_id = str(row.get("context_id", f"ctx_{i}"))
+        pre_text = row.get("pre_text", "")
+        post_text = row.get("post_text", "")
+        table = row.get("table", "")
+        context_text = row.get("context", "")
+        full_doc_content = f"{pre_text}\n{table}\n{post_text}\n{context_text}".strip()
+
+        if context_id not in corpus_docs_dict:
+            corpus_docs_dict[context_id] = Document(
+                id=context_id,
+                content=full_doc_content,
+                metadata={
+                    "source": "t2_ragbench",
+                    "context_id": context_id,
+                    "company_name": row.get("company_name"),
+                    "file_name": row.get("file_name"),
+                },
+            )
+
+    corpus_docs = list(corpus_docs_dict.values())
+    _save_corpus_cache(corpus_docs, cache_path)
+    return corpus_docs
+
+
+def load_corpus(name: str, **kwargs) -> list[Document]:
+    """Unified corpus loader."""
+    loaders = {
+        "enterpriserag_bench": load_enterpriserag_corpus,
+        "wixqa": load_wixqa_corpus,
+        "t2_ragbench": load_t2_ragbench_corpus,
+    }
+    if name not in loaders:
+        raise ValueError(f"Unknown corpus: {name}. Available: {list(loaders.keys())}")
+    return loaders[name](**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# QA Loaders
+# ---------------------------------------------------------------------------
+
+
+def load_enterpriserag_qa(
+    subset: str = "questions",
+    split: str = "test",
+    max_samples: int = 50,
+    force_reload: bool = False,
+) -> list[QAPair]:
+    """Load EnterpriseRAG-Bench QA pairs."""
+    cache_path = CACHE_DIR / f"qa_enterpriserag_{subset}_{split}_{max_samples}.json"
+    if not force_reload:
+        cached = _load_qa_cache(cache_path)
+        if cached is not None:
+            return cached
+
+    from datasets import load_dataset as hf_load_dataset
+
+    logger.info(f"Loading EnterpriseRAG-Bench QA pairs ({subset}/{split}), max_samples={max_samples}")
+    ds = hf_load_dataset(
+        "onyx-dot-app/EnterpriseRAG-Bench",
+        name=subset,
+        split=split,
+        streaming=False,
+        cache_dir=str(HF_CACHE_DIR),
+    )
+
+    qa_pairs: list[QAPair] = []
+    for i, row in enumerate(ds):
+        if i >= max_samples:
+            break
+        qid = str(row.get("question_id", f"erag_{i}"))
+        doc_ids = row.get("expected_doc_ids", [])
+        if isinstance(doc_ids, str):
+            doc_ids = [doc_ids]
+        doc_ids = [str(d) for d in doc_ids]
+
+        qa_pairs.append(
+            QAPair(
+                id=qid,
+                question=row["question"],
+                answer=row.get("gold_answer", ""),
+                ground_truth_doc_ids=doc_ids,
+                metadata={
+                    "source": "enterpriserag_bench",
+                    "question_type": row.get("question_type", ""),
+                    "source_types": row.get("source_types", []),
+                    "answer_facts": row.get("answer_facts", []),
+                },
+            )
+        )
+
+    _save_qa_cache(qa_pairs, cache_path)
+    return qa_pairs
+
+
+def load_wixqa_qa(
+    subset: str = "wixqa_expertwritten",
+    split: str = "train",
+    max_samples: int = 50,
+    force_reload: bool = False,
+) -> list[QAPair]:
+    """Load WixQA QA pairs."""
+    cache_path = CACHE_DIR / f"qa_wixqa_{subset}_{split}_{max_samples}.json"
+    if not force_reload:
+        cached = _load_qa_cache(cache_path)
+        if cached is not None:
+            return cached
+
+    from datasets import load_dataset as hf_load_dataset
+
+    logger.info(f"Loading WixQA QA pairs ({subset}/{split}), max_samples={max_samples}")
+    ds_qa = hf_load_dataset(
+        "Wix/WixQA",
+        name=subset,
+        split=split,
+        streaming=False,
+        cache_dir=str(HF_CACHE_DIR),
+    )
+    qa_pairs: list[QAPair] = []
+
+    for i, row in enumerate(ds_qa):
+        if i >= max_samples:
+            break
+        art_ids = row.get("article_ids", [])
+        if isinstance(art_ids, str):
+            art_ids = [art_ids]
+        art_ids_str = [str(x) for x in art_ids]
+
+        qa_pairs.append(
+            QAPair(
+                id=f"wix_{i}",
+                question=row["question"],
+                answer=row.get("answer", ""),
+                ground_truth_doc_ids=art_ids_str,
+                metadata={"source": "wixqa", "subset": subset},
+            )
+        )
+
+    _save_qa_cache(qa_pairs, cache_path)
+    return qa_pairs
+
+
+def load_t2_ragbench_qa(
+    subset: str = "FinQA",
+    split: str = "train",
+    max_samples: int = 50,
+    force_reload: bool = False,
+) -> list[QAPair]:
+    """Load T²-RAGBench QA pairs."""
+    cache_path = CACHE_DIR / f"qa_t2_ragbench_{subset}_{split}_{max_samples}.json"
+    if not force_reload:
+        cached = _load_qa_cache(cache_path)
+        if cached is not None:
+            return cached
+
+    from datasets import load_dataset as hf_load_dataset
+
+    logger.info(f"Loading T²-RAGBench QA pairs ({subset}/{split}), max_samples={max_samples}")
     ds = hf_load_dataset(
         "G4KMU/t2-ragbench",
         name=subset,
@@ -288,19 +373,15 @@ def load_t2_ragbench(
     )
 
     qa_pairs: list[QAPair] = []
-    corpus_docs_dict: dict[str, Document] = {}
-
     for i, row in enumerate(ds):
         if i >= max_samples:
             break
         qid = str(row.get("id", f"t2_{i}"))
         context_id = str(row.get("context_id", f"ctx_{i}"))
-
         pre_text = row.get("pre_text", "")
         post_text = row.get("post_text", "")
         table = row.get("table", "")
         context_text = row.get("context", "")
-
         full_doc_content = f"{pre_text}\n{table}\n{post_text}\n{context_text}".strip()
 
         qa_pairs.append(
@@ -320,35 +401,30 @@ def load_t2_ragbench(
             )
         )
 
-        if context_id not in corpus_docs_dict:
-            corpus_docs_dict[context_id] = Document(
-                id=context_id,
-                content=full_doc_content,
-                metadata={
-                    "source": "t2_ragbench",
-                    "context_id": context_id,
-                    "company_name": row.get("company_name"),
-                    "file_name": row.get("file_name"),
-                },
-            )
-
-    bundle = DatasetBundle(
-        name="t2_ragbench",
-        qa_pairs=qa_pairs,
-        corpus_docs=list(corpus_docs_dict.values()),
-        metadata={"subset": subset, "split": split},
-    )
-    _save_bundle_cache(bundle, cache_path)
-    return bundle
+    _save_qa_cache(qa_pairs, cache_path)
+    return qa_pairs
 
 
-def load_qa_dataset(name: str, **kwargs) -> DatasetBundle:
-    """Unified loader: load a dataset bundle by name."""
+def load_qa_dataset(name: str, max_samples: int = 50, force_reload: bool = False, **kwargs) -> list[QAPair]:
+    """Unified QA loader: load QA pairs by dataset name."""
     loaders = {
-        "enterpriserag_bench": load_enterpriserag_bench,
-        "wixqa": load_wixqa,
-        "t2_ragbench": load_t2_ragbench,
+        "enterpriserag_bench": load_enterpriserag_qa,
+        "wixqa": load_wixqa_qa,
+        "t2_ragbench": load_t2_ragbench_qa,
     }
     if name not in loaders:
         raise ValueError(f"Unknown dataset: {name}. Available: {list(loaders.keys())}")
-    return loaders[name](**kwargs)
+    return loaders[name](max_samples=max_samples, force_reload=force_reload, **kwargs)
+
+
+def load_dataset_bundle(name: str, max_samples: int = 50, force_reload: bool = False, **kwargs) -> DatasetBundle:
+    """Unified loader: loads both QA pairs and corpus documents into a DatasetBundle."""
+    qa_pairs = load_qa_dataset(name, max_samples=max_samples, force_reload=force_reload, **kwargs)
+    corpus_docs = load_corpus(name, force_reload=force_reload, **kwargs)
+
+    return DatasetBundle(
+        name=name,
+        qa_pairs=qa_pairs,
+        corpus_docs=corpus_docs,
+        metadata={"name": name, "max_samples": max_samples},
+    )
