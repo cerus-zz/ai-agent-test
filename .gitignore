@@ -26,8 +26,8 @@ experiments/results/
 Thumbs.db
 
 # Data & Cache
-data/cache/
-data/hf_cache/
+my_agent/data/cache/
+my_agent/data/hf_cache/
 
 # Jupyter
 .ipynb_checkpoints/
